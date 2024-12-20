@@ -2,18 +2,23 @@
 
 Implement a chat server (step by-step)
 
-- IMPLEMENT [graceful shutdown](https://tokio.rs/tokio/topics/shutdown#waiting-for-things-to-finish-shutting-down)
+- add a GUI, so that you can separate output and input in the clients. On the server side could be cool to have a tree showing what is happening inside the server in a structured way.
 
-- "keep the handles around, so not to have zombie tasks, i.e. without parents" (otherwise you loose control)
-
-- add identification for users (not authentication yet) as A. advised you, with a data structure where you take and give back the user identifications
+- add a general tests (recall that to see the output you might want to use the arg `--nocapture`) that on different screens executes the server and a number of clients which connect to it and chat among themselves
 
 - implement  basic level for an admin authentication: if one gives a specific commands and provides the right password, it can control the server (only one person per time must be granted such access)
 
 - add some security and cryptography. Just the basics.
 
+## T. hot recommendations
+
+- framing and buffering: what happens when a message is longer than 250 chars? There is a tokio_util instrument about framing and buffering.
 
 ## Developer's guide
+
+```mermaid
+
+```
 
 ### channels and strings
 
