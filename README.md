@@ -2,6 +2,7 @@
 
 Implement a chat server (step by-step)
 
+
 - IMPLEMENT [graceful shutdown](https://tokio.rs/tokio/topics/shutdown#waiting-for-things-to-finish-shutting-down)
 
 - "keep the handles around, so not to have zombie tasks, i.e. without parents" (otherwise you loose control)
