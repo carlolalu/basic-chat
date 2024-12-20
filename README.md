@@ -2,9 +2,8 @@
 
 Implement a chat server (step by-step)
 
-- IMPLEMENT [graceful shutdown](https://tokio.rs/tokio/topics/shutdown#waiting-for-things-to-finish-shutting-down)
 
-- "keep the handles around, so not to have zombie tasks, i.e. without parents" (otherwise you loose control)
+- IMPLEMENT [graceful shutdown](https://tokio.rs/tokio/topics/shutdown#waiting-for-things-to-finish-shutting-down) (done for the client, but not yet perfect: after control-C it is necessary to press also enter)
 
 - add identification for users (not authentication yet) as A. advised you, with a data structure where you take and give back the user identifications
 

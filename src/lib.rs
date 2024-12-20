@@ -46,6 +46,15 @@ impl Message {
             content,
         }
     }
+
+    pub fn craft_server_shutdown_msg() -> Message {
+        let content = "The SERVER is shutting down".to_string();
+
+        Message {
+            username: "SERVER".to_string(),
+            content,
+        }
+    }
 }
 
 impl fmt::Display for Message {
