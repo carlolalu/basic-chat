@@ -1,24 +1,34 @@
+# User's Guide
+
+Run the server with `cargo run --bin server`, and the client with `cargo run --bin client`. The client will then guide the chat user in the process.
+
 # Objectives
 
 Implement a chat server (step by-step)
 
-- add a GUI, so that you can separate output and input in the clients. On the server side could be cool to have a tree showing what is happening inside the server in a structured way.
+- GUI: separate output and input in the clients + on the server side have a tree showing what is happening inside the server in a structured way.
 
-- add a general tests (recall that to see the output you might want to use the arg `--nocapture`) that on different screens executes the server and a number of clients which connect to it and chat among themselves
+- basic level for an admin authentication: if one gives a specific commands and provides the right password, it can control the server (only one person per time must be granted such access)
 
-- implement  basic level for an admin authentication: if one gives a specific commands and provides the right password, it can control the server (only one person per time must be granted such access)
+- make the id pool somehow sharded: it will handle better backpressure from many clients.
 
-- add some security and cryptography. Just the basics.
+- I would like to make this library a library capable of creating an ecosystem of servers and clients connected to each others, in order to create big networks. This should be something where from an integration test one could activate a modality in which it uses a single client but also in which it might decide to activate many and use them with an OOP fashion: `client.connect_to_server(addr)`, `client.login(name)`, `client.send_msg(msg)` etc....
 
 ## T. hot recommendations
 
-- framing and buffering: what happens when a message is longer than 250 chars? There is a tokio_util instrument about framing and buffering.
+- framing and buffering: what happens when a message is longer than BUFFER_DIMENSION chars? There is a tokio_util instrument about framing and buffering. Should I also revisit the read and read_buf choice of functions? Definitely I should implement what tom said me: verify the framing and so on by the procedure of `Mocking`, explained in the chapter `Unit Testing` from the tokio tutorial.
 
 ## Developer's guide
 
+Here I should draw a graph to explain the simple architecture of my server
 ```mermaid
 
 ```
+
+## my diary
+
+How to test what is happening with framing and buffering? Should I make some small unit test?
+
 
 ### channels and strings
 

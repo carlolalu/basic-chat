@@ -1,7 +1,7 @@
 use chat_server_tokio::paket::*;
 use std::sync::Arc;
 use tokio::{
-    io::{self, AsyncReadExt, AsyncRead, AsyncWrite, AsyncWriteExt},
+    io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     signal, sync,
 };
@@ -19,7 +19,9 @@ async fn main() -> Result<()> {
 
     let shutdown_token = CancellationToken::new();
     let shutdown_token_manager = shutdown_token.clone();
-    let shutdown_token_dispatcher = shutdown_token.clone();
+
+    let shutdown_token_dispatcher = CancellationToken::new();
+    let shutdown_token_dispatcher_handle = shutdown_token_dispatcher.clone();
 
     let (shutdown_tx, shutdown_recv) = sync::mpsc::channel::<bool>(2);
     let _shutdown_tx_manager = shutdown_tx.clone();
@@ -38,12 +40,14 @@ async fn main() -> Result<()> {
     });
 
     main_tracker.spawn(async move {
-        server_manager(dispatcher_tx_arc, client_handler_tx, shutdown_token_manager).await?;
+        server_manager(dispatcher_tx_arc, client_handler_tx, shutdown_token_manager, shutdown_token_dispatcher_handle).await?;
         Ok::<(), GenericError>(())
     });
 
     main_tracker.close();
     main_tracker.wait().await;
+
+    println!("The server is shutting down!");
 
     Ok(())
 }
@@ -61,6 +65,8 @@ async fn shutdown_signal(
 
     shutdown_token.cancel();
 
+    println!("General shutdown signal given");
+
     Ok(())
 }
 
@@ -68,15 +74,14 @@ async fn shutdown_signal(
 async fn dispatcher(
     mut dispatcher_rx: sync::mpsc::Receiver<Dispatch>,
     dispatcher_mic: Arc<sync::broadcast::Sender<Dispatch>>,
-    shutdown_token: CancellationToken,
+    shutdown_token_dispatcher: CancellationToken,
 ) -> Result<()> {
-    let dispatcher_name = "# [Dispatcher]".to_string();
+    let task_id = "# [Dispatcher]";
 
-    println!("{dispatcher_name}:> Starting ...");
+    println!("{task_id}:> Starting ...");
     loop {
         tokio::select! {
-            // no final dispatch: it is created locally on each client handler tcp writer
-            _ = shutdown_token.cancelled() => break,
+            _ = shutdown_token_dispatcher.cancelled() => break,
 
             transmission = dispatcher_rx.recv() => {
                 if let Some(dispatch) = transmission {
@@ -86,6 +91,8 @@ async fn dispatcher(
         }
     }
 
+    println!("{task_id}:> The dispatcher is shutting down.");
+
     Ok::<(), GenericError>(())
 }
 
@@ -94,8 +101,12 @@ async fn server_manager(
     dispatcher_tx_arc: Arc<sync::broadcast::Sender<Dispatch>>,
     client_handler_tx: sync::mpsc::Sender<Dispatch>,
     shutdown_token: CancellationToken,
+    shutdown_token_dispatcher_handle : CancellationToken
 ) -> Result<()> {
-    println!("Start server manager loop!");
+
+    let task_id = "# [Server Manager]";
+
+    println!("{task_id}:> Starting.");
 
     let listener = TcpListener::bind(SERVER_ADDR).await?;
 
@@ -105,13 +116,16 @@ async fn server_manager(
 
     loop {
         if server_manager_tracker.len() > MAX_NUM_USERS {
-            println!("A new connection was requested but the number of connected clients has reached the maximum.");
+            println!("{task_id}:> A new connection was requested but the number of connected clients has reached the maximum.");
         }
 
         let shutdown_token_client = shutdown_token.clone();
 
         tokio::select! {
-            _ = shutdown_token.cancelled() => break,
+            _ = shutdown_token.cancelled() => {
+                println!("{task_id}:> Stop accepting new connections, waiting for the current ones to be interrupted.");
+                break
+            },
             result = listener.accept() => {
                 let (stream, addr) = result?;
                 let client_handler_tx = client_handler_tx.clone();
@@ -139,11 +153,14 @@ async fn server_manager(
     server_manager_tracker.close();
     server_manager_tracker.wait().await;
 
-    println!("The server will thus now shut off!");
+    println!("{task_id}:> No connection active anymore, waiting for the dispatcher to shutdown.");
+
+    shutdown_token_dispatcher_handle.cancel();
+
+    println!("{task_id}:> The server manager is shutting down.");
 
     Ok::<(), GenericError>(())
 }
-
 
 /// The client handler divides the stream into reader and writer, and then spawns two tasks handling them.
 async fn client_handler(
@@ -155,7 +172,7 @@ async fn client_handler(
     shutdown_token: CancellationToken,
 ) -> Result<()> {
     let userid = obtain_id_token(&id_pool)?;
-    let task_id = format!("@ Handler of [{userid}:{addr}]");
+    let task_id = format!("@ Handler of ['{userid}':{addr}]");
     let client_handler_task_manager = TaskTracker::new();
 
     println!("{task_id}:> Starting...");
@@ -170,31 +187,39 @@ async fn client_handler(
     let client_token_rd = client_token.clone();
 
     client_handler_task_manager.spawn(async move {
-        client_tcp_wr_loop(
+        match client_tcp_wr_loop(
             tcp_wr,
-            task_id_handle1,
+            &task_id_handle1,
             client_handler_rx,
             userid,
-            client_token_wr,
+            &client_token_wr,
         )
-        .await?;
-        Ok::<(), GenericError>(())
+        .await {
+            Ok(()) => (),
+            Err(e) => eprintln!("{task_id_handle1} The writer crashed: '{e}'"),
+        }
+        client_token_wr.cancel();
     });
 
     client_handler_task_manager.spawn(async move {
-        client_tcp_rd_loop(
+        match client_tcp_rd_loop(
             tcp_rd,
-            task_id_handle2,
+            &task_id_handle2,
             client_handler_tx,
             userid,
-            client_token_rd,
+            &client_token_rd,
         )
-        .await?;
-        Ok::<(), GenericError>(())
+        .await {
+            Ok(()) => (),
+            Err(e) => eprintln!("{task_id_handle2} The reader crashed: '{e}'"),
+        }
+        client_token_rd.cancel();
     });
 
-    shutdown_token.cancelled().await;
-    client_token.cancel();
+    tokio::select! {
+        _ = shutdown_token.cancelled() => client_token.cancel(),
+        _ = client_token.cancelled() => (),
+    }
 
     client_handler_task_manager.close();
     client_handler_task_manager.wait().await;
@@ -207,24 +232,18 @@ async fn client_handler(
     Ok(())
 }
 
-
 async fn client_tcp_wr_loop(
     mut tcp_wr: (impl AsyncWrite + Unpin),
-    supertask_id: Arc<String>,
+    supertask_id: &Arc<String>,
     mut client_handler_rx: sync::broadcast::Receiver<Dispatch>,
     userid: usize,
-    client_token: CancellationToken,
+    client_token: &CancellationToken,
 ) -> Result<()> {
     let task_id = format!("{supertask_id} (TCP-writer)");
 
     loop {
         tokio::select! {
-            _ = client_token.cancelled() => {
-                let serialised_msg = serde_json::to_string(&Message::craft_server_shutdown_msg())?;
-                tcp_wr.write_all(serialised_msg.as_bytes()).await?;
-                break;
-            }
-
+            _ = client_token.cancelled() => break,
             result = client_handler_rx.recv() => {
                 match result {
                     Ok(dispatch) => {
@@ -243,7 +262,8 @@ async fn client_tcp_wr_loop(
         }
     }
 
-    client_token.cancel();
+    let serialised_msg = serde_json::to_string(&Message::craft_server_interrupt_msg())?;
+    tcp_wr.write_all(serialised_msg.as_bytes()).await?;
 
     println!("{task_id}:> Terminating task.");
 
@@ -252,17 +272,17 @@ async fn client_tcp_wr_loop(
 
 async fn client_tcp_rd_loop(
     mut tcp_rd: impl AsyncRead + Unpin,
-    supertask_id: Arc<String>,
+    supertask_id: &Arc<String>,
     client_handler_tx: sync::mpsc::Sender<Dispatch>,
     userid: usize,
-    client_token: CancellationToken,
+    client_token: &CancellationToken,
 ) -> Result<()> {
     let task_id = format!("{supertask_id} (TCP-recv)");
 
-    let mut buffer_incoming = Vec::with_capacity(256);
+    let mut buffer_incoming = Vec::with_capacity(BUFFER_LEN);
 
     let username =
-        obtain_username(&task_id, &mut tcp_rd, &mut buffer_incoming, &client_token).await?;
+        obtain_username(&task_id, &mut tcp_rd, &mut buffer_incoming, client_token).await?;
 
     let init_dispatch = Dispatch::new(
         userid,
@@ -281,30 +301,36 @@ async fn client_tcp_rd_loop(
 
             transmission = tcp_rd.read_buf(&mut buffer_incoming) => {
                 match transmission {
-                    Ok(n) => {
-                        if n > 0 {
-                            println!("{task_id}:> Message received.");
 
-                            let dispatch =
-                                Dispatch::new(userid, Message::from_serialized_buffer(&buffer_incoming)?);
+                    // todo: here manage chunks which are longer than BUFFER_DIMENSION chars
+                    Ok(n) if n > 0 => {
+                        let message = {
+                            let serialized_msg = String::from_utf8(buffer_incoming.clone())?;
+                            serde_json::from_str::<Message>(&serialized_msg)
+                        };
 
-                            client_handler_tx.send(dispatch.clone()).await?;
+                        // debug
+                        println!(r###"The message is ####{:?}####"###, message);
 
-                            println!("{task_id}:> Message wrapped in a dispatch and sent.");
-                        } else {
-                            // Ok(0) implies one of two possible scenarios, both could be treated separately (not needed here IMHO)
-                            // https://docs.rs/tokio/latest/tokio/io/trait.AsyncReadExt.html#method.read_buf
-                            let final_dispatch = Dispatch::craft_status_change_dispatch(
-                                userid,
-                                &username,
-                                UserStatus::Absent,
-                            );
-                            client_handler_tx.send(final_dispatch.clone()).await?;
-                            println!("{task_id}:> The connection is no longer active. Final dispatch sent.");
-                            break;
-                        }
-                    }
+                        let message = message?;
 
+                        println!("{task_id}:> Message of content-length {} (in chars) received.", message.get_content_length());
+
+                        let dispatch = Dispatch::new(userid, message);
+                        client_handler_tx.send(dispatch.clone()).await?;
+
+                        println!("{task_id}:> Message wrapped in a dispatch and sent.")
+                    },
+                    Ok(_zero) => {
+                        let final_dispatch = Dispatch::craft_status_change_dispatch(
+                            userid,
+                            &username,
+                            UserStatus::Absent,
+                        );
+                        client_handler_tx.send(final_dispatch.clone()).await?;
+                        println!("{task_id}:> The connection is no longer active. Final dispatch sent.");
+                        break;
+                    },
                     Err(_e) => {
                         println!("## The TCP-reader left us. RIP.");
                         break;
@@ -313,8 +339,6 @@ async fn client_tcp_rd_loop(
             }
         }
     }
-
-    client_token.cancel();
 
     println!("{task_id}:> Terminating task.");
 
@@ -335,18 +359,26 @@ async fn obtain_username(
         },
 
         transmission = tcp_rd.read_buf(buffer_incoming) => {
+
+            let err = {
+                let err_msg = format!("{task_id}:> The 'helo' message was not received");
+                GenericError::from(io::Error::new(io::ErrorKind::NotFound, err_msg))
+            };
+
             match transmission {
                 Ok(n) if n > 0 => {
-                    let helo_msg = Message::from_serialized_buffer(&buffer_incoming)?;
+                    let incoming_msg = {
+                        let serialized_msg = String::from_utf8(buffer_incoming.clone())?;
+                        serde_json::from_str::<Message>(&serialized_msg)?
+                    };
 
-                    Ok(helo_msg.get_username())
-                }
-
-                Ok(_) | _ => {
-                    let err_msg = format!("{task_id}:> The 'helo' message was not received");
-                    let e = GenericError::from(io::Error::new(io::ErrorKind::NotFound, err_msg));
-                    Err(e)
-                }
+                    if &incoming_msg.get_content() == "helo" {
+                        Ok(incoming_msg.get_username())
+                    } else {
+                        Err(err)
+                    }
+                },
+                Ok(_) | _ => Err(err),
             }
         },
     }
@@ -357,7 +389,37 @@ mod test {
     use super::*;
 
     #[tokio::test]
-    async fn buff_n_framing(num_clients: usize) -> Result<()> {
-        todo!();
+    async fn reading_frames() -> Result<()> {
+        use tokio::io::BufReader;
+
+        let username = "pino";
+        let content1: String = std::iter::repeat("a").take(200).collect();
+        let content2: String = std::iter::repeat("a").take(300).collect();
+
+        let serialized_helo = Message::new(username, "helo").serialized()?;
+        let serialized_msg1 = Message::new(username, &content1).serialized()?;
+        let serialized_msg2 = Message::new(username, &content2).serialized()?;
+        let reader = tokio_test::io::Builder::new()
+            .read(serialized_helo.as_bytes())
+            .read(serialized_msg1.as_bytes())
+            .read(serialized_msg2.as_bytes())
+            .build();
+        let reader = BufReader::new(reader);
+
+        let supertask_id = &Arc::new("supertask_id".to_string());
+
+        let (client_handler_tx, mut receiver) = sync::mpsc::channel::<Dispatch>(50);
+
+        let userid = 1;
+
+        let client_token = &CancellationToken::new();
+
+        client_tcp_rd_loop(reader, supertask_id, client_handler_tx, userid, client_token).await?;
+
+        while let Some(received) = receiver.recv().await {
+            println!("The dispatch received is: {received}");
+        }
+
+        Ok::<(), GenericError>(())
     }
 }

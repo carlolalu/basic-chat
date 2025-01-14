@@ -5,17 +5,19 @@ use std::sync::Arc;
 pub type GenericError = Box<dyn std::error::Error + Send + Sync + 'static>;
 pub type Result<T> = std::result::Result<T, GenericError>;
 
-
 pub static SERVER_ADDR: &str = "127.0.0.1:6440";
-pub static MAX_NUM_USERS: usize = 2000;
+pub const MAX_NUM_USERS: usize = 2000;
 
+pub const MAX_USERNAME_LEN: usize = 40;
+pub const MAX_CONTENT_UNIT_LEN: usize = 256;
+pub const BUFFER_LEN: usize = MAX_USERNAME_LEN + MAX_CONTENT_UNIT_LEN + 20;
 
 pub type SharedIdPool = Arc<std::sync::Mutex<Vec<usize>>>;
 
 pub fn new_sharded_id_pool() -> SharedIdPool {
     assert!(MAX_NUM_USERS < usize::MAX);
 
-    let id_pool = (1..=MAX_NUM_USERS).collect();
+    let id_pool = (1..=MAX_NUM_USERS).rev().collect();
     Arc::new(std::sync::Mutex::new(id_pool))
 }
 
@@ -25,7 +27,8 @@ pub fn obtain_id_token(ids: &SharedIdPool) -> Result<usize> {
         Ok(t) => t,
         Err(_) => return Err(GenericError::from("The mutex of the id pool was poisoned.")),
     };
-    locked_vec.pop()
+    locked_vec
+        .pop()
         .ok_or(GenericError::from("No ids left in the id pool."))
 }
 
@@ -38,7 +41,6 @@ pub fn redeem_token(ids: SharedIdPool, id: usize) -> Result<()> {
     locked_vec.push(id);
     Ok(())
 }
-
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Message {
@@ -63,9 +65,17 @@ impl Message {
         self.username.clone()
     }
 
-    pub fn from_serialized_buffer(buffer: &Vec<u8>) -> Result<Message> {
-        let msg = serde_json::from_str::<Message>(&String::from_utf8(buffer.clone())?)?;
-        Ok(msg)
+    pub fn get_content(&self) -> String {
+        self.content.clone()
+    }
+
+    pub fn get_content_length(&self) -> usize {
+        self.content.len()
+    }
+
+    pub fn serialized(&self) -> Result<String> {
+        let serialized = serde_json::to_string(&self)?;
+        Ok(serialized)
     }
 
     pub fn craft_status_change_msg(username: &str, status: UserStatus) -> Message {
@@ -80,8 +90,8 @@ impl Message {
         }
     }
 
-    pub fn craft_server_shutdown_msg() -> Message {
-        let content = "The SERVER is shutting down".to_string();
+    pub fn craft_server_interrupt_msg() -> Message {
+        let content = "The SERVER is shutting down this connection.".to_string();
 
         Message {
             username: "SERVER".to_string(),
