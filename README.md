@@ -14,10 +14,6 @@ Implement a chat server (step by-step)
 
 - I would like to make this library a library capable of creating an ecosystem of servers and clients connected to each others, in order to create big networks. This should be something where from an integration test one could activate a modality in which it uses a single client but also in which it might decide to activate many and use them with an OOP fashion: `client.connect_to_server(addr)`, `client.login(name)`, `client.send_msg(msg)` etc....
 
-## T. hot recommendations
-
-- framing and buffering: what happens when a message is longer than BUFFER_DIMENSION chars? There is a tokio_util instrument about framing and buffering. Should I also revisit the read and read_buf choice of functions? Definitely I should implement what tom said me: verify the framing and so on by the procedure of `Mocking`, explained in the chapter `Unit Testing` from the tokio tutorial.
-
 ## Developer's guide
 
 Here I should draw a graph to explain the simple architecture of my server

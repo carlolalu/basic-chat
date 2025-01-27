@@ -1,4 +1,4 @@
-use chat_server_tokio::paket::*;
+use chat_server_tokio::*;
 use std::sync::Arc;
 use tokio::{
     io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -112,7 +112,7 @@ async fn server_manager(
 
     let server_manager_tracker = TaskTracker::new();
 
-    let id_pool = new_sharded_id_pool();
+    let id_pool = SharedIdPool::new();
 
     loop {
         if server_manager_tracker.len() > MAX_NUM_USERS {
@@ -171,7 +171,7 @@ async fn client_handler(
     id_pool: SharedIdPool,
     shutdown_token: CancellationToken,
 ) -> Result<()> {
-    let userid = obtain_id_token(&id_pool)?;
+    let userid = id_pool.obtain_id_token()?;
     let task_id = format!("@ Handler of ['{userid}':{addr}]");
     let client_handler_task_manager = TaskTracker::new();
 
@@ -224,7 +224,7 @@ async fn client_handler(
     client_handler_task_manager.close();
     client_handler_task_manager.wait().await;
 
-    redeem_token(id_pool, userid)?;
+    id_pool.redeem_token(userid)?;
     println!("{task_id}:> Id token redeemed.");
 
     println!("{task_id}:> Terminating task.");
@@ -303,10 +303,24 @@ async fn client_tcp_rd_loop(
                 match transmission {
 
                     // todo: here manage chunks which are longer than BUFFER_DIMENSION chars
+                    // how to change this? How to act for such situations?
                     Ok(n) if n > 0 => {
                         let message = {
-                            let serialized_msg = String::from_utf8(buffer_incoming.clone())?;
-                            serde_json::from_str::<Message>(&serialized_msg)
+
+                            // todo: first isolate the "paketed" message, constrained by the symbols "|".
+
+                            let pakets_n_fragment = String::from_utf8(buffer_incoming.clone())?;
+
+
+                            // * with the 1st message:
+                            // 1. divide paket_fragments in various pakets + 1 fragment
+                            // 2. serde_json on each paket and sew together their content
+                            // 3. append the last fragment to the fragments_buffer
+
+                            // * with subsequent messages:
+                            // 1. find the first "|" and if it is in the beginning then start the procedure above
+                            //        else read till "|", attach this first part to the fragments buffer above and then repeat the procedure above
+                            serde_json::from_str::<Message>(&pakets_n_fragment)
                         };
 
                         // debug
@@ -396,9 +410,9 @@ mod test {
         let content1: String = std::iter::repeat("a").take(200).collect();
         let content2: String = std::iter::repeat("a").take(300).collect();
 
-        let serialized_helo = Message::new(username, "helo").serialized()?;
-        let serialized_msg1 = Message::new(username, &content1).serialized()?;
-        let serialized_msg2 = Message::new(username, &content2).serialized()?;
+        let serialized_helo = Message::new(username, "helo")?.serialized()?;
+        let serialized_msg1 = Message::new(username, &content1)?.serialized()?;
+        let serialized_msg2 = Message::new(username, &content2)?.serialized()?;
         let reader = tokio_test::io::Builder::new()
             .read(serialized_helo.as_bytes())
             .read(serialized_msg1.as_bytes())
