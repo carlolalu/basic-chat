@@ -87,7 +87,7 @@ async fn connect_and_login() -> Result<(ReadHalf<TcpStream>, WriteHalf<TcpStream
         std::io::stdin().read_line(&mut name)?;
         let name = name.trim().to_string();
 
-        if name.len() < Message::MAX_USERNAME_LEN {
+        if name.as_bytes().len() < Message::MAX_USERNAME_LEN {
             break name;
         } else {
             println!(r###"This username is too long! It must not be longer than {} chars!"###, Message::MAX_USERNAME_LEN);
@@ -135,32 +135,40 @@ where
     Wr: AsyncWrite + Unpin,
     Rd: AsyncRead + Unpin,
 {
-    let mut outgoing_buffer: Vec<u8> = Vec::with_capacity(Message::MAX_CONTENT_LEN);
+    let mut writing_buffer: Vec<u8> = Vec::with_capacity(Message::MAX_CONTENT_LEN);
 
     'prompt: loop {
         print!("\n{name}:> ");
         std::io::stdout().flush()?;
 
         loop {
-            outgoing_buffer.clear();
+            writing_buffer.clear();
 
             tokio::select! {
                 _ = shutdown_token.cancelled() => break 'prompt,
 
-                result = stdin.read_buf(&mut outgoing_buffer) => {
+                result = stdin.read_buf(&mut writing_buffer) => {
 
                     match result {
                         Ok(n) if n>0 => {
-                            let is_last_chunk = if outgoing_buffer.last() == Some(&b'\n') {
-                                outgoing_buffer.pop();
+                            let is_last_chunk = if writing_buffer.last() == Some(&b'\n') {
+                                writing_buffer.pop();
                                 true
                             } else {
                                 false
                             };
 
-                            if outgoing_buffer.len() > 0 {
-                                let text = String::from_utf8(outgoing_buffer.clone())?;
-                                let serialized = Message::new(&name, &text)?.serialized()?;
+                            if writing_buffer.len() > 0 {
+                                let text = String::from_utf8(writing_buffer.clone())?;
+
+                                let msg = match Message::new(&name, &text) {
+                                    Ok(msg) => msg,
+                                    Err(e) => {
+                                        println!("The message could not be processed because of the subsequent error: {e}\nPlease adapt you input accordingly.");
+                                        continue 'prompt;
+                                    }
+                                };
+                                let serialized = msg.serialized()?;
                                 let paketed = format!("| {serialized} |");
 
                                 tcp_wr.write_all(paketed.as_bytes()).await?;
@@ -194,7 +202,7 @@ async fn rd_manager<Rd>(
 where
     Rd: AsyncRead + Unpin,
 {
-    let mut incoming_buffer: Vec<u8> = Vec::with_capacity(BUFFER_LEN);
+    let mut incoming_buffer: Vec<u8> = Vec::with_capacity(INCOMING_BUFFER_LEN);
 
     // todo: check to write the write '\n' after the first prompt appears
     // for now this will be raw by adding '\n' every time
@@ -239,6 +247,7 @@ where
 
 #[cfg(test)]
 mod test {
+    use std::sync::mpsc::channel;
     use super::*;
 
     #[tokio::test]
@@ -264,7 +273,9 @@ mod test {
 
         let shutdown_token = CancellationToken::new();
 
-        wr_manager(stdout, mock_stdin, username, shutdown_token, shutdown_tx).await?;
+        let (sender, _receiver) = sync::mpsc::channel::<bool>(7);
+
+        wr_manager(stdout, mock_stdin, username, shutdown_token, shutdown_tx, sender).await?;
 
         Ok::<(), GenericError>(())
     }

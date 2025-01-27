@@ -279,7 +279,7 @@ async fn client_tcp_rd_loop(
 ) -> Result<()> {
     let task_id = format!("{supertask_id} (TCP-recv)");
 
-    let mut buffer_incoming = Vec::with_capacity(BUFFER_LEN);
+    let mut buffer_incoming = Vec::with_capacity(INCOMING_BUFFER_LEN);
 
     let username =
         obtain_username(&task_id, &mut tcp_rd, &mut buffer_incoming, client_token).await?;
@@ -328,7 +328,7 @@ async fn client_tcp_rd_loop(
 
                         let message = message?;
 
-                        println!("{task_id}:> Message of content-length {} (in chars) received.", message.get_content_length());
+                        println!("{task_id}:> Message of content-length {} (in chars) received.", message.get_content().len());
 
                         let dispatch = Dispatch::new(userid, message);
                         client_handler_tx.send(dispatch.clone()).await?;
