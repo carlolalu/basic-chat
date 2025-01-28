@@ -90,16 +90,19 @@ async fn connect_and_login() -> Result<(ReadHalf<TcpStream>, WriteHalf<TcpStream
         if name.as_bytes().len() < Message::MAX_USERNAME_LEN {
             break name;
         } else {
-            println!(r###"This username is too long! It must not be longer than {} chars!"###, Message::MAX_USERNAME_LEN);
+            println!(
+                r###"This username is too long! It must not be longer than {} chars!"###,
+                Message::MAX_USERNAME_LEN
+            );
         }
     };
 
     let stream = TcpStream::connect(SERVER_ADDR).await?;
     let (tcp_rd, mut tcp_wr) = tokio::io::split(stream);
 
-    let serialised_helo_msg = serde_json::to_string(&Message::new(&name, "helo")?)?;
+    let serialized_helo_msg = serde_json::to_string(&Message::new(&name, "helo")?)?;
 
-    tcp_wr.write_all(serialised_helo_msg.as_bytes()).await?;
+    tcp_wr.write_all(serialized_helo_msg.as_bytes()).await?;
     tcp_wr.flush().await?;
 
     Ok((tcp_rd, tcp_wr, name.to_string()))
@@ -123,13 +126,15 @@ async fn shutdown_signal(
     Ok(())
 }
 
+// todo: adapt this manager to split the written messages in chunks of maximum `Max_content_len` to
+// write the messages in the writer
 async fn wr_manager<Wr, Rd>(
     mut tcp_wr: Wr,
     mut stdin: Rd,
     name: &str,
     shutdown_token: CancellationToken,
     shutdown_send: sync::mpsc::Sender<bool>,
-    new_prompt_send : sync::mpsc::Sender::<bool>
+    new_prompt_send: sync::mpsc::Sender<bool>,
 ) -> Result<()>
 where
     Wr: AsyncWrite + Unpin,
@@ -197,7 +202,7 @@ async fn rd_manager<Rd>(
     mut tcp_rd: Rd,
     shutdown_token: CancellationToken,
     shutdown_send: sync::mpsc::Sender<bool>,
-    mut new_prompt_recv : sync::mpsc::Receiver::<bool>
+    mut new_prompt_recv: sync::mpsc::Receiver<bool>,
 ) -> Result<()>
 where
     Rd: AsyncRead + Unpin,
@@ -211,8 +216,6 @@ where
         incoming_buffer.clear();
 
         // todo: framing must be corrected here as well. The best would be to address this in the library
-
-
 
         tokio::select! {
             _ = shutdown_token.cancelled() => break,
@@ -247,8 +250,8 @@ where
 
 #[cfg(test)]
 mod test {
-    use std::sync::mpsc::channel;
     use super::*;
+    use std::sync::mpsc::channel;
 
     #[tokio::test]
     async fn writing_frames() -> Result<()> {
@@ -275,9 +278,16 @@ mod test {
 
         let (sender, _receiver) = sync::mpsc::channel::<bool>(7);
 
-        wr_manager(stdout, mock_stdin, username, shutdown_token, shutdown_tx, sender).await?;
+        wr_manager(
+            stdout,
+            mock_stdin,
+            username,
+            shutdown_token,
+            shutdown_tx,
+            sender,
+        )
+        .await?;
 
         Ok::<(), GenericError>(())
     }
-
 }

@@ -40,7 +40,13 @@ async fn main() -> Result<()> {
     });
 
     main_tracker.spawn(async move {
-        server_manager(dispatcher_tx_arc, client_handler_tx, shutdown_token_manager, shutdown_token_dispatcher_handle).await?;
+        server_manager(
+            dispatcher_tx_arc,
+            client_handler_tx,
+            shutdown_token_manager,
+            shutdown_token_dispatcher_handle,
+        )
+        .await?;
         Ok::<(), GenericError>(())
     });
 
@@ -101,9 +107,8 @@ async fn server_manager(
     dispatcher_tx_arc: Arc<sync::broadcast::Sender<Dispatch>>,
     client_handler_tx: sync::mpsc::Sender<Dispatch>,
     shutdown_token: CancellationToken,
-    shutdown_token_dispatcher_handle : CancellationToken
+    shutdown_token_dispatcher_handle: CancellationToken,
 ) -> Result<()> {
-
     let task_id = "# [Server Manager]";
 
     println!("{task_id}:> Starting.");
@@ -194,7 +199,8 @@ async fn client_handler(
             userid,
             &client_token_wr,
         )
-        .await {
+        .await
+        {
             Ok(()) => (),
             Err(e) => eprintln!("{task_id_handle1} The writer crashed: '{e}'"),
         }
@@ -209,7 +215,8 @@ async fn client_handler(
             userid,
             &client_token_rd,
         )
-        .await {
+        .await
+        {
             Ok(()) => (),
             Err(e) => eprintln!("{task_id_handle2} The reader crashed: '{e}'"),
         }
@@ -250,8 +257,8 @@ async fn client_tcp_wr_loop(
                         if dispatch.get_userid() != userid {
                             println!("{task_id}:> Dispatch received.");
 
-                            let serialised_msg = serde_json::to_string(&dispatch.into_msg())?;
-                            tcp_wr.write_all(serialised_msg.as_bytes()).await?;
+                            let serialized_msg = serde_json::to_string(&dispatch.into_msg())?;
+                            tcp_wr.write_all(serialized_msg.as_bytes()).await?;
 
                             println!("{task_id}:> The msg wrapped in the dispatch was sent.");
                         }
@@ -262,8 +269,8 @@ async fn client_tcp_wr_loop(
         }
     }
 
-    let serialised_msg = serde_json::to_string(&Message::craft_server_interrupt_msg())?;
-    tcp_wr.write_all(serialised_msg.as_bytes()).await?;
+    let serialized_msg = serde_json::to_string(&Message::craft_server_interrupt_msg())?;
+    tcp_wr.write_all(serialized_msg.as_bytes()).await?;
 
     println!("{task_id}:> Terminating task.");
 
@@ -428,7 +435,14 @@ mod test {
 
         let client_token = &CancellationToken::new();
 
-        client_tcp_rd_loop(reader, supertask_id, client_handler_tx, userid, client_token).await?;
+        client_tcp_rd_loop(
+            reader,
+            supertask_id,
+            client_handler_tx,
+            userid,
+            client_token,
+        )
+        .await?;
 
         while let Some(received) = receiver.recv().await {
             println!("The dispatch received is: {received}");
